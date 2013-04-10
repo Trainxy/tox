@@ -71,11 +71,32 @@ abstract class Dao extends Core\Assembly implements Application\IDao
     protected $cache;
 
     /**
-     * Stores a cache alive time (ms).
+     * Stores a cache alive time (s).
      *
      * @var Tox\Data\IKV
      */
     protected $expire;
+
+    /**
+     * Stores a default expire time (s).
+     *
+     * @var int
+     */
+    private $defaultExpire = 3600;
+
+    /**
+     * Stores expire time configs.
+     *
+     * @var Tox\Application\Configuration
+     */
+    protected static $config;
+
+    /**
+     * Stores cache key of configs.
+     *
+     * @var string
+     */
+    private $keyOfConfig = 'tox.application.dao.cache.dao';
 
     /**
      * CONSTRUCT FUNCTION
@@ -125,6 +146,17 @@ abstract class Dao extends Core\Assembly implements Application\IDao
     }
 
     /**
+     * Set the expire time configs.
+     *
+     * @param  Application\Configuration $config  Config object of expire times.
+     * @return void
+     */
+    final public static function config(Application\Configuration\Configuration $config)
+    {
+        self::$config = $config;
+    }
+
+    /**
      * Binds a data access source.
      *
      * @param  Application\Dao\Dao $dao Data access source to be bined.
@@ -133,7 +165,11 @@ abstract class Dao extends Core\Assembly implements Application\IDao
     public function bind(Application\Dao\Dao $dao)
     {
         if ($this->dao) {
-            throw new CachingDataSourceBindedException();
+            if ($this->dao == $dao) {
+                return $this;
+            } else {
+                throw new CachingDataSourceBindedException($dao);
+            }
         }
         $this->dao = $dao;
         return $this;
@@ -179,7 +215,8 @@ abstract class Dao extends Core\Assembly implements Application\IDao
 
         $s_key = $this->generateKey($s_id);
         $fields['id'] = $s_id;
-        self::getDomain()->set($s_key, $fields, $this->expire);
+        self::getDomain()->set($s_key, $fields, $this->getExpire());
+        return $s_id;
     }
 
     /**
@@ -191,15 +228,34 @@ abstract class Dao extends Core\Assembly implements Application\IDao
     public function read($id)
     {
         $s_key = $this->generateKey($id);
-
         $a_value = self::getDomain()->get($s_key);
         if ($a_value) {
             return $a_value;
         } else {
             $a_value = $this->getDao()->read($id);
-            self::getDomain()->set($s_key, $a_value, $this->expire);
+            self::getDomain()->set($s_key, $a_value, $this->getExpire());
             return $a_value;
         }
+    }
+
+    /**
+     * Get expire time by rule.
+     * Level 1 : $this->expire
+     * Level 2 : self::config[$key]
+     * Level 3 : $this->defaultExpire
+     *
+     * @return int
+     */
+    public function getExpire()
+    {
+        if (isset($this->expire)) {
+            return $this->expire;
+        }
+        $s_dao = get_class($this->getDao());
+        if (isset(self::$config) && array_key_exists($s_dao, self::$config[$this->keyOfConfig])) {
+            return self::$config[$this->keyOfConfig][$s_dao];
+        }
+        return $this->defaultExpire;
     }
 
     /**
@@ -215,8 +271,12 @@ abstract class Dao extends Core\Assembly implements Application\IDao
 
         $this->getDao()->update($id, $fields);
         $a_original_data = self::getDomain()->get($s_key);
-        $a_updated_data = array_merge($a_original_data, $fields);
-        self::getDomain()->set($s_key, $a_updated_data, $this->expire);
+        if ($a_original_data && is_array($a_original_data)) {
+            $a_updated_data = array_merge($a_original_data, $fields);
+        } else {
+            $a_updated_data = $this->getDao()->read($id);
+        }
+        self::getDomain()->set($s_key, $a_updated_data, $this->getExpire());
     }
 
     /**
@@ -245,7 +305,7 @@ abstract class Dao extends Core\Assembly implements Application\IDao
      */
     public function countBy($where = array(), $offset = 0, $length = 0)
     {
-        $this->getDao()->countBy($where, $offset, $length);
+        return $this->getDao()->countBy($where, $offset, $length);
     }
 
     /**
@@ -261,7 +321,7 @@ abstract class Dao extends Core\Assembly implements Application\IDao
      */
     public function listBy($where = array(), $orderBy = array(), $offset = 0, $length = 0)
     {
-        $this->getDao()->listBy($where, $orderBy, $offset, $length);
+        return $this->getDao()->listBy($where, $orderBy, $offset, $length);
     }
 
     /**
@@ -288,6 +348,14 @@ abstract class Dao extends Core\Assembly implements Application\IDao
         }
         return $this->dao;
     }
-}
 
+    public function __call($method, $args)
+    {
+        if (isset($this->$method) && is_callable($method)) {
+            return call_user_func_array($this->$method, $args);
+        } else {
+            return call_user_func_array(array($this->getDao(), $method), $args);
+        }
+    }
+}
 // vi:ft=php fenc=utf-8 ff=unix ts=4 sts=4 et sw=4 fen fdm=indent fdl=1 tw=120

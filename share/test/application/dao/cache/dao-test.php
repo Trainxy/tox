@@ -31,6 +31,8 @@ require_once __DIR__ . '/../../../../../src/data/isource.php';
 require_once __DIR__ . '/../../../../../src/application/idao.php';
 require_once __DIR__ . '/../../../../../src/application/dao/dao.php';
 require_once __DIR__ . '/../../../../../src/application/dao/cache/dao.php';
+require_once __DIR__ . '/../../../../../src/application/iconfiguration.php';
+require_once __DIR__ . '/../../../../../src/application/configuration/configuration.php';
 require_once __DIR__ . '/../../../../../src/data/ikv.php';
 require_once __DIR__ . '/../../../../../src/data/kv/kv.php';
 require_once __DIR__ . '/../../../../../src/data/kv/memcache.php';
@@ -138,7 +140,7 @@ class DaoTest extends PHPUnit_Framework_TestCase
         $o_cache_dao->bind($o_mock_dao);
         $o_cache_dao->setExpire(60);
 
-        $o_cache_dao->create(array('title' => 'hello', 'description' => 'world'));
+        $this->assertEquals('111', $o_cache_dao->create(array('title' => 'hello', 'description' => 'world')));
         $o_cache_dao->update('111', array('title' => 'new title'));
         $o_cache_dao->delete('111');
     }
@@ -167,6 +169,69 @@ class DaoTest extends PHPUnit_Framework_TestCase
         $o_cache_dao->countBy();
         $o_cache_dao->listBy();
     }
-}
 
+    public function testMethodNotImplementedWouldTransmitedBy()
+    {
+        $o_mock_dao = $this->getMock(
+            'Tox\\Application\\Dao\\Dao',
+            array('countBy', 'create', 'delete', 'update', 'listBy', 'read', 'listAndSortByCategoryAndCountry')
+        );
+
+        $o_mock_dao->expects($this->once())
+            ->method('listAndSortByCategoryAndCountry')
+            ->with($this->equalTo(array('category', 'country')))
+            ->will($this->returnValue('list'));
+
+        $o_cache_dao = $this->getMockBuilder('Tox\\Application\\Dao\\Cache\\Dao')
+            ->disableOriginalConstructor()
+            ->getMockForAbstractClass();
+        $o_cache_dao::getInstance();
+        $o_cache_dao->bind($o_mock_dao);
+        $this->assertEquals('list', $o_cache_dao->listAndSortByCategoryAndCountry(array('category', 'country')));
+    }
+
+    public function testGetsExpireTimeByRightOrder()
+    {
+        $o_mock_dao = $this->getMock(
+            'Tox\\Application\\Dao\\Dao',
+            array('countBy', 'create', 'delete', 'update', 'listBy', 'read', 'listAndSortByCategoryAndCountry')
+        );
+        $o_cache_dao = $this->getMockBuilder('Tox\\Application\\Dao\\Cache\\Dao')
+            ->disableOriginalConstructor()
+            ->getMockForAbstractClass();
+        $o_cache_dao::getInstance();
+        $o_cache_dao->bind($o_mock_dao);
+        $this->assertEquals('3600', $o_cache_dao->getExpire());
+
+        $a_configs = array(
+            'tox.application.dao.cache.dao' => array(
+                get_class($o_mock_dao) => '7200'
+            )
+        );
+
+        $o_mock_config = $this->getMockBuilder('Tox\\Application\\Configuration\\Configuration')
+            ->disableOriginalConstructor()
+            ->getMock();
+        $o_mock_config->expects($this->any())
+            ->method('offsetGet')
+            ->will(
+                $this->returnCallBack(
+                    function ($key) use ($a_configs) {
+                        return $a_configs[$key];
+                    }
+                )
+            );
+
+        $o_mock_config->expects($this->any())
+            ->method('offsetExists')
+            ->with($this->equalTo('tox.application.dao.cache.dao'))
+            ->will($this->returnValue(true));
+
+        $o_cache_dao::config($o_mock_config);
+        $this->assertEquals('7200', $o_cache_dao->getExpire());
+
+        $o_cache_dao->setExpire('9600');
+        $this->assertEquals('9600', $o_cache_dao->getExpire());
+    }
+}
 // vi:ft=php fenc=utf-8 ff=unix ts=4 sts=4 et sw=4 fen fdm=indent fdl=1 tw=120
